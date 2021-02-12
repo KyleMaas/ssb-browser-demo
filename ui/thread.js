@@ -6,7 +6,7 @@ module.exports = function () {
 
   const { and, hasRoot, toCallback } = SSB.dbOperators
 
-  let initialState = function(rootId) {
+  let initialState = function(self, rootId) {
     return {
       fixedRootId: rootId,
       title: rootId,
@@ -26,7 +26,7 @@ module.exports = function () {
          <h2>{{ $t('thread.title', { title: title }) }}</h2>
          <ssb-msg v-bind:key="rootMsg.key" v-bind:msg="rootMsg" v-bind:thread="fixedRootId"></ssb-msg>
          <ssb-msg v-for="msg in messages" v-bind:key="msg.key" v-bind:msg="msg"></ssb-msg>
-         <textarea class="messageText" v-model="postText"></textarea><br>
+         <markdown-editor :initialValue="postText" ref="markdownEditor" /><br>
          <button class="clickButton" v-on:click="postReply">{{ $t('thread.postReply') }}</button>
          <input type="file" class="fileInput" v-on:change="onFileSelect">
          <ssb-msg-preview v-bind:show="showPreview" v-bind:text="postText" v-bind:onClose="closePreview" v-bind:confirmPost="confirmPost"></ssb-msg-preview>
@@ -35,7 +35,7 @@ module.exports = function () {
     props: ['rootId'],
     
     data: function() {
-      return initialState('%' + this.rootId)
+      return initialState(this, '%' + this.rootId)
     },
 
     methods: {
@@ -51,12 +51,24 @@ module.exports = function () {
       },
 
       postReply: function() {
+        this.postText = this.$refs.markdownEditor.getMarkdown()
+
+        // Make sure the full post (including headers) is not larger than the 8KiB limit.
+        var postData = this.buildPostData()
+        if (JSON.stringify(postData).length > 8192) {
+          alert(this.$root.$t('common.postTooLarge'))
+          return
+        }
+
+        if (this.postText == '') {
+          alert(this.$root.$t('thread.blankFieldError'))
+          return
+        }
+
         this.showPreview = true
       },
 
-      confirmPost: function() {
-        if (this.postText == '') return
-
+      buildPostData: function() {
         var mentions = ssbMentions(this.postText)
         var content = { type: 'post', text: this.postText, root: this.fixedRootId, branch: this.latestMsgIdInThread, mentions }
 
@@ -65,13 +77,21 @@ module.exports = function () {
           content = SSB.box(content, this.recipients.map(x => (typeof(x) === 'string' ? x : x.link).substr(1)))
         }
 
+        return content
+      },
+
+      confirmPost: function() {
         var self = this
+
+        content = this.buildPostData()
 
         SSB.db.publish(content, (err) => {
           if (err) console.error(err)
 
           self.postText = ""
           self.showPreview = false
+          if (self.$refs.markdownEditor)
+            self.$refs.markdownEditor.setMarkdown(self.descriptionText)
 
           self.renderThread()
         })
@@ -141,10 +161,7 @@ module.exports = function () {
 
       renderThread: function() {
         var self = this
-        console.log("rendering thread", self.fixedRootId)
         SSB.db.get(self.fixedRootId, (err, rootMsg) => {
-          console.log("root err", err)
-          console.log("root msg", rootMsg)
           if (err || rootMsg === undefined) { // FIXME: make this configurable
             SSB.getThread(self.fixedRootId, (err) => {
               if (err) console.error(err)
@@ -164,7 +181,7 @@ module.exports = function () {
     },
 
     beforeRouteUpdate(to, from, next) {
-      Object.assign(this.$data, initialState('%' + to.params.rootId))
+      Object.assign(this.$data, initialState(this, '%' + to.params.rootId))
       this.renderThread()
       next()
     },

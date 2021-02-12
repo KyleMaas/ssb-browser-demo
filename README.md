@@ -31,7 +31,7 @@ Things that work:
  - partial replication
  - direct connections to other peers using [rooms]
  - viewing posts and threads, including forks, backlinks and reactions
- - posting and replying to messages including posting blobs
+ - posting, adding reactions, replying to messages including posting blobs
  - automatic exif stripping (such as GPS coordinates) on images for better privacy
  - automatic image resizing of large images
  - viewing profiles and setting up your own profile
@@ -41,7 +41,10 @@ Things that work:
  - deleting messages included a whole profile
  - blocking
  - channels
+ - groups
  - notifications
+ - themes
+ - translations
  - backup / restore feed using mnemonics
  - easily run alternative [networks][pub-setup]
 
@@ -64,7 +67,43 @@ I made a [blog post][pub-setup] on how to run a server pub to relay messages to 
 
 `npm run build` for developing and `npm run release` for a much smaller bundle.  You can also run `npm run inline` to genereate a single monolithic index.html file with all resources included.
 
+# Enabling WebSockets in ssb-room
+
+To run an ssb-room which this can connect to, you will need to enable WebSockets support.  This requires three things:
+
+1. In ssb-room's config.js, add a line to `connections` to configure the WebSockets port (external, key, and cert need to be customized for your installation):
+```
+  connections: {
+    incoming: {
+      net: [{ port: 8888, host: "0.0.0.0", scope: "public", transform: "shs" }],
+      ws: [{ port: 9999, host: "::", scope: "public", transform: "shs", external: ["example.com"], http: true }],
+      // Or, to use secure WebSockets:
+      // ws: [{ port: 9999, host: "::", scope: "public", transform: "shs", external: ["example.com"], key: "/etc/letsencrypt/live/example.com/privkey.pem", cert: "/etc/letsencrypt/live/example.com/cert.pem" }],
+    },
+    outgoing: {
+      net: [{transform: 'shs'}],
+    },
+  },
+```
+2. Run either `npm install -g ssb-ws` to install the WebSockets connector globally, or cd into the ssb-room directory and `npm install ssb-ws`
+3. In index.js, add the following line to the SecretStack section just below `ssb-logging`:
+```
+  .use(require('ssb-ws'))
+```
+
+After that, your ssb-room will be compatible with ssb-browser-demo.
+
 # Other
+
+## How to help with translating
+
+If you know a language other than English, we need your help!  Take a look at our translation efforts here:
+
+[Issue #103](https://github.com/arj03/ssb-browser-demo/issues/103)
+
+We currently have support for English (US), English (UK), English (Pirate), and mostly machine-translated Japanese.  To add a translation, take a look at messages.json.  You'll find sections in there for the different languages we support.  Just take an existing language block (like "en") and copy it to a new block with the locale's name as the key, and start translating!
+
+As a side note, we use [vue-i18n](https://github.com/kazupon/vue-i18n) for internationalization, which supports fallback locales.  So, for example, if your locale is "en-US", then when it finds that we don't have a specific "en-US" translation, it falls back to the generic "en".  The same would be true of "fr-CH" if we had an "fr" translation, for example.  So if your translations are generic enough to be used by multiple local variants, please put them into a generic language block.
 
 ## Force WASM locally (outside browser)
 

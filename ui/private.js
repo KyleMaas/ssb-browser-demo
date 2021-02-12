@@ -2,19 +2,20 @@ module.exports = function (componentsState) {
   const helpers = require('./helpers')
   const pull = require('pull-stream')
   const ssbMentions = require('ssb-mentions')
-  const { and, isPrivate, isRoot, type, toCallback } = SSB.dbOperators
+  const ref = require('ssb-ref')
+  const { and, descending, isPrivate, isRoot, type, toCallback } = SSB.dbOperators
 
   return {
     template: `<div id="private">
         <span v-if="postMessageVisible">
-        <v-select placeholder="recipients" multiple v-model="recipients" :options="people" label="name">
+        <v-select placeholder="recipients" multiple v-model="recipients" :options="people" label="name" @search="suggest" @open="recipientsOpen">
           <template #option="{ name, image }">
             <img v-if='image' class="tinyAvatar" :src='image' />
             <span>{{ name }}</span>
           </template>
         </v-select>
         <input type="text" id="subject" v-model="subject" placeholder="subject" />
-        <textarea class="messageText" v-model="postText"></textarea><br>
+        <markdown-editor :initialValue="postText" ref="markdownEditor" :privateBlobs="true" />
         </span>
         <button class="clickButton" v-on:click="onPost">{{ $t('private.postPrivateMessage') }}</button>
         <input type="file" class="fileInput" v-if="postMessageVisible" v-on:change="onFileSelect">
@@ -26,6 +27,7 @@ module.exports = function (componentsState) {
     props: ['feedId'],
 
     data: function() {
+      var self = this
       return {
         postMessageVisible: false,
         postText: "",
@@ -39,6 +41,39 @@ module.exports = function (componentsState) {
     },
 
     methods: {
+      suggest: function(searchString, loading) {
+        var self = this
+        loading(true)
+
+        const matches = SSB.searchProfiles(searchString)
+
+        var unsortedPeople = []
+        matches.forEach(match => {
+          const p = SSB.getProfile(match.id)
+          if (p && p.imageURL)
+            unsortedPeople.push({ id: match.id, name: match.name, image: p.imageURL })
+          else
+            unsortedPeople.push({ id: match.id, name: match.name, image: helpers.getMissingProfileImage() })
+        })
+        const sortFunc = new Intl.Collator().compare
+        self.people = unsortedPeople.sort((a, b) => { return sortFunc(a.name, b.name) })
+        loading(false)
+      },
+
+      recipientsOpen: function() {
+        const matches = SSB.searchProfiles("")
+        var unsortedPeople = []
+        matches.forEach(match => {
+          const p = SSB.getProfile(match.id)
+          if (p && p.imageURL)
+            unsortedPeople.push({ id: match.id, name: match.name, image: p.imageURL })
+          else
+            unsortedPeople.push({ id: match.id, name: match.name, image: helpers.getMissingProfileImage() })
+        })
+        const sortFunc = new Intl.Collator().compare
+        this.people = unsortedPeople.sort((a, b) => { return sortFunc(a.name, b.name) })
+      },
+
       renderPrivate: function() {
         document.body.classList.add('refreshing')
 
@@ -61,6 +96,7 @@ module.exports = function (componentsState) {
 
         SSB.db.query(
           and(isPrivate(), isRoot(), type('post')),
+          descending(),
           toCallback((err, results) => {
             this.messages = results
             console.timeEnd("private messages")
@@ -88,15 +124,24 @@ module.exports = function (componentsState) {
           return
         }
 
+        this.postText = this.$refs.markdownEditor.getMarkdown()
+
         if (this.postText == '' || this.subject == '') {
           alert(this.$root.$t('private.blankFieldError'))
+          return
+        }
+
+        // Make sure the full post (including headers) is not larger than the 8KiB limit.
+        var postData = this.buildPostData()
+        if (JSON.stringify(postData).length > 8192) {
+          alert(this.$root.$t('common.postTooLarge'))
           return
         }
 
         this.showPreview = true
       },
 
-      confirmPost: function() {
+      buildPostData: function() {
         if (this.recipients.length == 0) {
           alert(this.$root.$t('private.noRecipientError'))
           return
@@ -120,6 +165,14 @@ module.exports = function (componentsState) {
           content = SSB.box(content, recps.map(x => x.substr(1)))
         }
 
+        return content
+      },
+
+      confirmPost: function() {
+        var self = this
+
+        var content = this.buildPostData()
+
         SSB.db.publish(content, (err) => {
           if (err) console.log(err)
 
@@ -128,6 +181,8 @@ module.exports = function (componentsState) {
           this.subject = ""
           this.recipients = []
           this.showPreview = false
+          if (self.$refs.markdownEditor)
+            self.$refs.markdownEditor.setMarkdown(this.descriptionText)
 
           this.renderPrivate()
         })
@@ -138,16 +193,6 @@ module.exports = function (componentsState) {
       document.title = this.$root.appTitle + " - " + this.$root.$t('private.title')
 
       this.renderPrivate()
-
-      // Try it right away, and then try again when we're connected in case this is a fresh load and we're only connected to rooms.
-      helpers.getPeople((err, people) => {
-        this.people = people
-      })
-      SSB.connectedWithData(() => {
-        helpers.getPeople((err, people) => {
-          this.people = people
-        })
-      })
     }
   }
 }

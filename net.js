@@ -74,6 +74,7 @@ SSB.activeConnections = 0
 SSB.activeConnectionsWithData = 0
 SSB.callbacksWaitingForConnection = []
 SSB.callbacksWaitingForConnectionWithData = []
+SSB.callbacksWaitingForDisconnect = []
 function runConnectedCallbacks() {
   while(SSB.callbacksWaitingForConnection.length > 0) {
     const cb = SSB.callbacksWaitingForConnection.shift()
@@ -84,6 +85,13 @@ function runConnectedCallbacks() {
 function runConnectedWithDataCallbacks() {
   while(SSB.callbacksWaitingForConnectionWithData.length > 0) {
     const cb = SSB.callbacksWaitingForConnectionWithData.shift()
+    cb(SSB)
+  }
+}
+
+function runDisconnectedCallbacks() {
+  while(SSB.callbacksWaitingForDisconnect.length > 0) {
+    const cb = SSB.callbacksWaitingForDisconnect.shift()
     cb(SSB)
   }
 }
@@ -116,14 +124,21 @@ SSB.connectedWithData = function(cb) {
   }
 }
 
+SSB.disconnected = function(cb) {
+  // Register a callback for when we're no longer connected to any peer.
+  SSB.callbacksWaitingForDisconnect.push(cb);
+
+  if(!SSB.isConnected()) {
+    // Already connected.  Run all the callbacks.
+    runDisconnectedCallbacks()
+  }
+}
+
 // Register for the connect event so we can keep track of it.
 SSB.net.on('rpc:connect', (rpc) => {
   // Now we're connected.  Run all the callbacks.
   ++SSB.activeConnections
   runConnectedCallbacks()
-
-  // Register an event handler for disconnects so we know to trigger waiting again.
-  rpc.on('closed', () => --SSB.activeConnections)
 
   // See if we're operating on a connection with actual data (not a room).
   let connPeers = Array.from(SSB.net.conn.hub().entries())
@@ -140,59 +155,18 @@ SSB.net.on('rpc:connect', (rpc) => {
     // Register another callback to decrement our "connections with data" reference count.
     rpc.on('closed', () => --SSB.activeConnectionsWithData)
   }
+
+  // Register an event handler for disconnects so we know to trigger waiting again.
+  rpc.on('closed', () => {
+    --SSB.activeConnections
+    if (SSB.activeConnections == 0) {
+      runDisconnectedCallbacks()
+    }
+  })
 })
 
 SSB.getOOO = function(msgId, cb) {
   SSB.connectedWithData((rpc) => {
     SSB.net.ooo.get(msgId, cb)
   })
-}
-
-SSB.getProfileNameAsync = function(profileId, cb) {
-  // Get only the name from a profile.
-  // Encapsulated differently so that implementation can be changed out for faster versions without changing the API.
-  SSB.getProfileAsync(profileId, (err, profile) => {
-    if (err)
-      cb(err)
-    else
-      cb(null, profile.name)
-  })
-}
-
-SSB.getProfileAsync = function(profileId, cb) {
-  const profiles = SSB.db.getIndex('profiles').getProfiles()
-
-  if(profiles[profileId]) {
-    // We've got it already.
-    cb(null, profiles[profileId])
-  } else {
-    // Don't have it yet.  Let's try loading the graph.
-    SSB.db.getIndex('contacts').getGraphForFeedHops1(profileId, (err, data) => {
-      const profiles = SSB.db.getIndex('profiles').getProfiles()
-
-      if(!err && profiles[profileId]) {
-        // Got it from graph.
-        cb(null, profiles[profileId])
-      } else {
-        // Going to have to fetch it when a connection comes up.
-        SSB.connectedWithData(() => {
-          let rpc = SSB.getPeer()
-
-          if(!rpc) cb("No peer to connect to")
-
-          pull(
-            rpc.partialReplication.getMessagesOfType({id: profileId, type: 'contact'}),
-            pull.asyncMap(SSB.db.addOOO),
-            pull.collect((err, msgs) => {
-              if(err) cb(err)
-
-              const profiles = SSB.db.getIndex('profiles').getProfiles()
-              if (profiles[profileId])
-                cb(null, profiles[profileId])
-            })
-          )
-        })
-      }
-    })
-  }
 }

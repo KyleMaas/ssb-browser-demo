@@ -1,4 +1,5 @@
 const defaultPrefs = require("../defaultprefs.json")
+const helpers = require('./helpers')
 
 Vue.component('onboarding-dialog', {
   template: `
@@ -9,32 +10,32 @@ Vue.component('onboarding-dialog', {
                 <h3>{{ $t('onboarding.title') }}</h3>
                 <p v-html="$t('onboarding.welcomeMessage')"></p>
 
-		<hr />
+                <hr />
 
-		<p><label for="name">{{ $t('onboarding.profileName') }}</label><br />
-		<input type="text" v-model="name" id="name" :placeholder="$t('onboarding.profileNamePlaceholder')" /></p>
+                <p><label for="name">{{ $t('onboarding.profileName') }}</label><br />
+                <input type="text" v-model="name" id="name" :placeholder="$t('onboarding.profileNamePlaceholder')" /></p>
 
-		<hr />
+                <hr />
 
-		<p><label for="descriptionText">{{ $t('onboarding.profileDescription') }}</label><br />
-		<textarea cols="40" rows="6" id="descriptionText" v-model="descriptionText" :placeholder="$t('onboarding.profileDescriptionPlaceholder')"></textarea></p>
+                <p><label for="descriptionText">{{ $t('onboarding.profileDescription') }}</label><br />
+                <markdown-editor id="descriptionText" :placeholder="$t('onboarding.profileDescriptionPlaceholder')" :initialValue="descriptionText" ref="markdownEditor" />
 
                 <div v-if="suggestedPeers.length > 0">
-		<hr />
-		<p>{{ $t('onboarding.suggestedPeers') }}<br />
+                <hr />
+                <p>{{ $t('onboarding.suggestedPeers') }}<br />
                 <div v-for="(peer, index) in suggestedPeers">
                   <input type="checkbox" :id="'peer' + index" :value="peer" v-model="usePeers" />&nbsp;<label :for="'peer' + index">{{ peer.name }}</label>
                 </div>
-		</p>
+                </p>
                 </div>
 
                 <div v-if="suggestedFollows.length > 0">
-		<hr />
-		<p>{{ $t('onboarding.suggestedFollows') }}<br />
+                <hr />
+                <p>{{ $t('onboarding.suggestedFollows') }}<br />
                 <div v-for="(follow, index) in suggestedFollows">
                   <input type="checkbox" :id="'follow' + index" :value="follow" v-model="useFollows" />&nbsp;<label :for="'follow' + index">{{ follow.name }}</label>
                 </div>
-		</p>
+                </p>
                 </div>
 
                 <div class="modal-footer">
@@ -53,6 +54,7 @@ Vue.component('onboarding-dialog', {
   props: ['onClose', 'show'],
 
   data: function() {
+    var self = this
     return {
       name: '',
       descriptionText: '',
@@ -65,20 +67,32 @@ Vue.component('onboarding-dialog', {
 
   methods: {
     saveProfile: function() {
+      this.descriptionText = this.$refs.markdownEditor.getMarkdown()
+
       var msg = { type: 'about', about: SSB.net.id }
       if (this.name)
         msg.name = this.name
       if (this.descriptionText)
         msg.description = this.descriptionText
 
+      // Make sure the full post (including headers) is not larger than the 8KiB limit.
+      if (JSON.stringify(msg).length > 8192) {
+        throw this.$root.$t('common.postTooLarge')
+      }
+
       SSB.db.publish(msg, (err) => {
-        if (err) return alert(err)
+        if (err) throw err
       })
     },
 
     getStarted: function() {
       // Save the person's name and description.
-      this.saveProfile()
+      try {
+        this.saveProfile()
+      } catch(err) {
+        alert(err)
+        return
+      }
 
       // Connect to peers.
       for (p in this.usePeers) {
@@ -103,7 +117,7 @@ Vue.component('onboarding-dialog', {
           }, () => {
             // wait for db sync
             SSB.connectedWithData(() => {
-              SSB.db.getIndex('contacts').getGraphForFeed(SSB.net.id, () => SSB.net.sync(SSB.getPeer()))
+              SSB.net.sync(SSB.getPeer())
             })
           })
         })(this.useFollows[f].key)

@@ -7,7 +7,7 @@ module.exports = function () {
     template: `
        <div id="channel">
          <h2>{{ $t('channel.title', { name: channel }) }}</h2>
-         <textarea class="messageText" v-if="postMessageVisible" v-model="postText"></textarea>
+         <markdown-editor v-if="postMessageVisible" :initialValue="postText" ref="markdownEditor" />
          <button class="clickButton" id="postMessage" v-on:click="onPost">{{ $t('channel.postNewMessage') }}</button>
          <input type="file" class="fileInput" v-if="postMessageVisible" v-on:change="onFileSelect">
 
@@ -92,15 +92,37 @@ module.exports = function () {
           return
         }
 
+        this.postText = this.$refs.markdownEditor.getMarkdown()
+
+        // Make sure the full post (including headers) is not larger than the 8KiB limit.
+        var postData = this.buildPostData()
+        if (JSON.stringify(postData).length > 8192) {
+          alert(this.$root.$t('common.postTooLarge'))
+          return
+        }
+
+        if (this.postText == '') {
+          alert(this.$root.$t('channel.blankFieldError'))
+          return
+        }
+
         this.showPreview = true
+      },
+
+      buildPostData: function() {
+        var mentions = ssbMentions(this.postText)
+
+        var postData = { type: 'post', channel: this.channel, text: this.postText, mentions: mentions }
+
+        return postData
       },
 
       confirmPost: function() {
         var self = this
 
-        var mentions = ssbMentions(this.postText)
+        var postData = this.buildPostData()
 
-        SSB.db.publish({ type: 'post', channel: this.channel, text: this.postText, mentions: mentions }, (err) => {
+        SSB.db.publish(postData, (err) => {
           if (err) console.log(err)
 
           self.postText = ""
